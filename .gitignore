@@ -26,3 +26,7 @@ mono_crash.*
 # Windows image file caches
 Thumbs.db
 ehthumbs.db
+
+# NuGet Packages
+*.nupkg
+**/packages/*

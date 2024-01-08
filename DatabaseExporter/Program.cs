@@ -2,6 +2,8 @@
 using System.Data.SqlClient;
 using System.IO;
 using System.Configuration;
+using Microsoft.SqlServer.Management.Smo;
+using Microsoft.SqlServer.Management.Common;
 
 namespace DatabaseExporter
 {
@@ -24,21 +26,31 @@ namespace DatabaseExporter
 
         static void ExportTables(SqlConnection connection, string outputDirectory)
         {
+            Server server = new Server(new ServerConnection(connection.ConnectionString));
+
             // Fetch tables
-            using (SqlCommand command = new SqlCommand("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'", connection))
-            using (SqlDataReader reader = command.ExecuteReader())
+            foreach (Table table in server.Databases[connection.Database].Tables)
             {
-                // Create or overwrite the tables.txt file
-                using (StreamWriter writer = new StreamWriter(Path.Combine(outputDirectory, "tables.txt")))
+                string tableName = table.Name;
+                string createTableScript = GetCreateTableScript(table);
+
+                // Create or append to the CreateTableScript.sql file
+                string scriptFilePath = Path.Combine(outputDirectory, "CreateTableScript.sql");
+                using (StreamWriter writer = new StreamWriter(scriptFilePath, true))
                 {
-                    while (reader.Read())
-                    {
-                        string tableName = reader["TABLE_NAME"].ToString();
-                        // Write the table name to the file
-                        writer.WriteLine(tableName);
-                    }
+                    // Write the create table script to the file
+                    writer.WriteLine(createTableScript);
+                    writer.WriteLine(); // Add a blank line between tables for better readability
                 }
             }
+        }
+
+        static string GetCreateTableScript(Table table)
+        {
+            // Concatenate the lines from StringCollection to form the complete script
+            string createTableScript = string.Join(Environment.NewLine, table.Script());
+
+            return createTableScript;
         }
     }
 }
