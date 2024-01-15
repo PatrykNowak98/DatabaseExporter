@@ -6,7 +6,6 @@ using Microsoft.SqlServer.Management.Smo;
 using Microsoft.SqlServer.Management.Common;
 using System.Text;
 using System.Collections.Specialized;
-using Microsoft.SqlServer.Management.Sdk.Sfc;
 
 namespace DatabaseExporter
 {
@@ -17,27 +16,38 @@ namespace DatabaseExporter
             string connectionString = ConfigurationManager.ConnectionStrings["Initial"].ConnectionString;
             string outputDirectory = ConfigurationManager.AppSettings["outputDirectory"];
 
-            // Extract username and password from the connection string
+            string populationOutputDirectory = Path.Combine(outputDirectory, "DbPopulation");
+            string schemaOutputDirectory = Path.Combine(outputDirectory, "DbSchema");
+
+            if (!Directory.Exists(populationOutputDirectory))
+            {
+                Directory.CreateDirectory(populationOutputDirectory);
+            }
+
+            if (!Directory.Exists(schemaOutputDirectory))
+            {
+                Directory.CreateDirectory(schemaOutputDirectory);
+            }
+
             SqlConnectionStringBuilder builder = new SqlConnectionStringBuilder(connectionString);
             string username = builder.UserID;
             string password = builder.Password;
 
             Server server = new Server(new ServerConnection(builder.DataSource, username, password));
 
-            // Access the database from which you want to script the tables
             Database database = server.Databases[builder.InitialCatalog];
 
-            // Set scripting options
             ScriptingOptions scriptingOptions = new ScriptingOptions
             {
                 ScriptSchema = true,
                 ScriptData = false,
                 Indexes = true,
-                Triggers = true
-                // You can set more options as needed
+                Triggers = true,
+                NoCommandTerminator = false,
+                ScriptBatchTerminator =true,
+                ToFileOnly = true,
             };
 
-            //Set scriptiong options for population
             ScriptingOptions scriptingOptionsForPopulation = new ScriptingOptions
             {
                 ScriptData = true,
@@ -47,153 +57,315 @@ namespace DatabaseExporter
                 IncludeHeaders = true,
                 AppendToFile = true,
                 Indexes = true,
-                WithDependencies = true
+                WithDependencies = true,
+                NoCommandTerminator = false,
+                ScriptBatchTerminator = true,
+                ToFileOnly= true,
+                
+            };
+
+            ScriptingOptions scriptingOptionsForFunctions = new ScriptingOptions
+            {
+                ScriptSchema = true,
+                ScriptData = false,
+                Indexes = true,
+                Triggers = true,
+                ScriptDrops = false,
+                IncludeIfNotExists = false,
+                AnsiFile = false,
+                NoCollation = true,
+                SchemaQualify = false,
+                NoCommandTerminator = false,
+                ScriptBatchTerminator = true,
+                ToFileOnly = true,
+
+            };
+
+            ScriptingOptions optionsWithoutTriggers = new ScriptingOptions
+            {
+                ScriptSchema = true,
+                ScriptData = false,
+                Indexes = true,
+                NoCommandTerminator = false,
+                ScriptBatchTerminator = true,
+                ToFileOnly = true,
             };
 
             using (SqlConnection connection = new SqlConnection(connectionString))
             {
                 connection.Open();
 
-                // Specify the path for the combined script file
-                string combinedTablesFilePath = Path.Combine(outputDirectory, "Tables_Export.sql");
-                string combinedProceduresFilePath = Path.Combine(outputDirectory, "Procedures_Export.sql");
-                string combinedViewsFilePath = Path.Combine(outputDirectory, "Views_Export.sql");
-                string combinedDataTypesFilePath = Path.Combine(outputDirectory, "DataTypes_Export.sql");
+                string combinedTablesFilePath = Path.Combine(schemaOutputDirectory, "Tables_Export.sql");
+                string combinedTriggersFilePath = Path.Combine(schemaOutputDirectory, "Triggers_Export.sql");
+                string combinedProceduresFilePath = Path.Combine(schemaOutputDirectory, "Procedures_Export.sql");
+                string combinedViewsFilePath = Path.Combine(schemaOutputDirectory, "Views_Export.sql");
+                string combinedDataTypesFilePath = Path.Combine(schemaOutputDirectory, "DataTypes_Export.sql");
+                string combinedUsersFilePath = Path.Combine(schemaOutputDirectory, "Users_Export.sql");
+                string combinedRolesFilePath = Path.Combine(schemaOutputDirectory, "Roles_Export.sql");
+                string combinedUserDefinedFunctionsFilePath = Path.Combine(schemaOutputDirectory, "UserDefinedFunctions_Export.sql");
 
-                // Create a "logs" folder within the output directory
                 string logsFolderPath = Path.Combine(outputDirectory, "logs");
+
                 Directory.CreateDirectory(logsFolderPath);
 
-                // Specify the path for the log file within the "logs" folder
-                string logFilePath = Path.Combine(logsFolderPath, "ExportLog.txt");
+                string tableLogFilePath = Path.Combine(logsFolderPath, "TableExportLog.txt");
+                string procedureLogFilePath = Path.Combine(logsFolderPath, "ProcedureExportLog.txt");
+                string viewsLogFilePath = Path.Combine(logsFolderPath, "ViewsExportLog.txt");
+                string customDataTypesLogFilePath = Path.Combine(logsFolderPath, "CustomDataTypesExportLog.txt");
+                string usersLogFilePath = Path.Combine(logsFolderPath, "UsersExportLog.txt");
+                string tablePopullationLogFilePath = Path.Combine(logsFolderPath, "PopulatingExportLog.txt");
+                string rolesLogFilePath = Path.Combine(logsFolderPath, "RolesExportLog.txt");
+                string userFunctionsLogFilePath = Path.Combine(logsFolderPath, "UserDefFunctionsExportLog.txt");
+                string triggersFilePath = Path.Combine(logsFolderPath, "TriggersExportLog.txt");
 
-                using (StreamWriter logWriter = new StreamWriter(logFilePath, true))
+                using (StreamWriter logWriter = new StreamWriter(tableLogFilePath, true))
                 {
-                    // Log the start of the export
                     logWriter.WriteLine($"Export started at {DateTime.Now}");
 
-                    // Export tables
-                    /*ExportTables(database, connection, combinedTablesFilePath, scriptingOptions, logWriter);
-                    ExportStoredProcedures(database, connection, combinedProceduresFilePath, scriptingOptions, logWriter);
-                    ExportViews(database, connection, combinedViewsFilePath, scriptingOptions, logWriter);
-                    ExportCustomDataTypes(database, connection, combinedDataTypesFilePath, scriptingOptions, logWriter);*/
-                    ExportTableData(database, connection, scriptingOptionsForPopulation, logWriter, outputDirectory);
+                    ExportTables(database, connection, combinedTablesFilePath, optionsWithoutTriggers, logWriter);
 
-                    // Log the completion of the export
-                    logWriter.WriteLine($"Export completed at {DateTime.Now}");
+                    logWriter.WriteLine($"Export completed. [{DateTime.Now}]");
+                }
+
+                using (StreamWriter logWriter = new StreamWriter(triggersFilePath, true))
+                {
+                    logWriter.WriteLine($"Export started at {DateTime.Now}");
+
+                    ExportTriggers(database, connection, combinedTriggersFilePath, scriptingOptions, logWriter);
+
+                    logWriter.WriteLine($"Export completed. [{DateTime.Now}]");
+                }
+
+                using (StreamWriter logWriter = new StreamWriter(procedureLogFilePath, true))
+                {
+                    logWriter.WriteLine($"Export started at {DateTime.Now}");
+
+                    ExportStoredProcedures(database, connection, combinedProceduresFilePath, scriptingOptionsForFunctions, logWriter);
+
+                    logWriter.WriteLine($"Export completed. [{DateTime.Now}]");
+                }
+
+                using (StreamWriter logWriter = new StreamWriter(viewsLogFilePath, true))
+                {
+                    logWriter.WriteLine($"Export started at {DateTime.Now}");
+
+                    ExportViews(database, connection, tableLogFilePath, scriptingOptions, logWriter);
+
+                    logWriter.WriteLine($"Export completed. [{DateTime.Now}]");
+                }
+
+                using (StreamWriter logWriter = new StreamWriter(customDataTypesLogFilePath, true))
+                {
+                    logWriter.WriteLine($"Export started at {DateTime.Now}");
+
+                    ExportCustomDataTypes(database, connection, combinedDataTypesFilePath, scriptingOptions, logWriter);
+
+                    logWriter.WriteLine($"Export completed. [{DateTime.Now}]");
+                }
+
+                using (StreamWriter logWriter = new StreamWriter(usersLogFilePath, true))
+                {
+                    logWriter.WriteLine($"Export started at {DateTime.Now}");
+
+                    ExportUsers(database, connection, combinedUsersFilePath, scriptingOptions, logWriter);
+
+                    logWriter.WriteLine($"Export completed. [{DateTime.Now}]");
+                }
+
+                using (StreamWriter logWriter = new StreamWriter(tablePopullationLogFilePath, true))
+                {
+                    logWriter.WriteLine($"Export started at {DateTime.Now}");
+
+                    ExportTableData(database, connection, scriptingOptionsForPopulation, logWriter, populationOutputDirectory, server);
+
+                    logWriter.WriteLine($"Export completed. [{DateTime.Now}]");
+                }
+
+                using (StreamWriter logWriter = new StreamWriter(rolesLogFilePath, true))
+                {
+                    logWriter.WriteLine($"Export started at {DateTime.Now}");
+
+                    ExportRoles(database, connection, combinedRolesFilePath, scriptingOptions, logWriter);
+
+                    logWriter.WriteLine($"Export completed. [{DateTime.Now}]");
+                }
+
+                using (StreamWriter logWriter = new StreamWriter(userFunctionsLogFilePath, true))
+                {
+                    logWriter.WriteLine($"Export started at {DateTime.Now}");
+
+                    ExportUserDefFunctions(database, connection, userFunctionsLogFilePath, scriptingOptions, logWriter);
+
+                    logWriter.WriteLine($"Export completed. [{DateTime.Now}]");
                 }
 
                 Console.WriteLine("All exports completed.");
             }
         }
 
-        static void ExportTables(Database database, SqlConnection connection, string combinedTablesFilePath, ScriptingOptions scriptingOptions, StreamWriter logWriter)
+        #region ExportRegion
+        static void ExportTables(Database database, SqlConnection connection, string combinedTablesFilePath, ScriptingOptions optionsWithoutTriggers, StreamWriter logWriter)
         {
-            Console.WriteLine("Tables export");
-            logWriter.WriteLine($"Tables export started");
-
-            int totalTables = database.Tables.Count;
-            int processedTables = 0;
-
-            // Loop through the tables in the database and generate scripts
-            foreach (Table table in database.Tables)
+            try
             {
-                // Check if the table is a system table
-                if (!table.IsSystemObject)
-                {
-                    string createTableScript = GetCreateTableScript(table, scriptingOptions);
+                Console.WriteLine("Tables export");
+                logWriter.WriteLine($"Tables export started");
 
-                    // Append the create table script to the combined script file
+                int totalTables = database.Tables.Count;
+                int processedTables = 0;
+
+                foreach (Table table in database.Tables)
+                {
+                    string createTableScript = GetCreateTableScript(table, optionsWithoutTriggers);
+
                     using (StreamWriter writer = new StreamWriter(combinedTablesFilePath, true))
                     {
-                        // Write the create table script to the file
+
                         writer.WriteLine(createTableScript);
-                        writer.WriteLine(); // Add a blank line between tables for better readability
-                        // Log the progress
+                        writer.WriteLine();
+                        writer.WriteLine("GO");
+                        writer.WriteLine();
+
                         processedTables++;
                         int progressPercentage = (int)((double)processedTables / totalTables * 100);
-                        Console.WriteLine($"Tasks progress: {progressPercentage}%");
+                        Console.WriteLine($"Tables progress: {progressPercentage}%");
                         logWriter.WriteLine($"Table '{table.Name}' exported. Progress: {progressPercentage}%. [{DateTime.Now}]");
                     }
                 }
+
+                Console.WriteLine("Tables export completed successfully.");
+                logWriter.WriteLine($"Tables export completed");
             }
-            Console.WriteLine("Tables export completed successfully.");
-            logWriter.WriteLine($"Tables export completed");
+            catch (Exception ex)
+            {
+                Console.WriteLine($"An exception occured! {ex}");
+                logWriter.WriteLine($"An exception occured! {ex}");
+            }
         }
 
-        static void ExportStoredProcedures(Database database, SqlConnection connection, string combinedProceduresFilePath, ScriptingOptions scriptingOptions, StreamWriter logWriter)
+        static void ExportTriggers(Database database, SqlConnection connection, string combinedTriggersFilePath, ScriptingOptions scriptingOptions, StreamWriter logWriter)
         {
-            Console.WriteLine("Stored Procedures export");
-            logWriter.WriteLine($"Stored Procedures export started");
-
-            // Specify the path for the combined script file
-
-            // Get the total number of stored procedures for calculating progress
-            int totalProcedures = database.StoredProcedures.Count;
-            int processedProcedures = 0;
-
-            // Loop through the stored procedures in the database and generate scripts
-            foreach (StoredProcedure procedure in database.StoredProcedures)
+            try
             {
-                // Skip system procedures
-                if (procedure.IsSystemObject)
+                Console.WriteLine("Triggers export");
+                logWriter.WriteLine($"Triggers export started");
+
+                int totalTables = database.Tables.Count;
+                int processedTriggers = 0;
+
+                foreach (Table table in database.Tables)
                 {
-                    Console.WriteLine($"Skipping system procedure: {procedure.Name}");
-                    continue;
+                    foreach (Trigger trigger in table.Triggers)
+                    {
+                        string createTriggerScript = GetCreateTriggerScript(trigger, scriptingOptions);
+
+                        using (StreamWriter writer = new StreamWriter(combinedTriggersFilePath, true))
+                        {
+                            writer.WriteLine(createTriggerScript);
+                            writer.WriteLine();
+                            writer.WriteLine("GO");
+                            writer.WriteLine();
+
+                            processedTriggers++;
+                            int progressPercentage = (int)((double)processedTriggers / totalTables * 100);
+                            Console.WriteLine($"Triggers progress: {progressPercentage}%");
+                            logWriter.WriteLine($"Trigger '{trigger.Name}' exported. Progress: {progressPercentage}%. [{DateTime.Now}]");
+                        }
+                    }
                 }
 
-                string createProcedureScript = GetCreateProcedureScript(procedure, scriptingOptions);
-
-                // Append the create procedure script to the combined script file
-                using (StreamWriter writer = new StreamWriter(combinedProceduresFilePath, true))
-                {
-                    // Write the create procedure script to the file
-                    writer.WriteLine(createProcedureScript);
-                    writer.WriteLine(); // Add a blank line between procedures for better readability
-                                        // Increment the processed procedures count
-                    processedProcedures++;
-
-                    // Calculate and display the progress percentage
-                    int progressPercentage = (int)((double)processedProcedures / totalProcedures * 100);
-                    Console.WriteLine($"Procedure progress: {progressPercentage}%");
-                    logWriter.WriteLine($"Procedure '{procedure.Name}' exported. Progress: {progressPercentage}%. [{DateTime.Now}]");
-                }
+                Console.WriteLine("Triggers export completed successfully.");
+                logWriter.WriteLine("Triggers export completed successfully.");
             }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"An exception occured! {ex}");
+                logWriter.WriteLine($"An exception occured! {ex}");
+            }
+        }
 
-            Console.WriteLine("Stored Procedures export completed successfully.");
-            logWriter.WriteLine($"Stored Procedures export completed");
+        static void ExportStoredProcedures(Database database, SqlConnection connection, string combinedProceduresFilePath, ScriptingOptions scriptingOptionsForFunctions, StreamWriter logWriter)
+        {
+            try
+            {
+                Console.WriteLine("Stored Procedures export");
+                logWriter.WriteLine($"Stored Procedures export started");
+
+                int totalStoredProcedures = database.StoredProcedures.Count;
+                int processedProcedures = 0;
+
+                foreach (StoredProcedure procedure in database.StoredProcedures)
+                {
+
+                    if (procedure.IsSystemObject)
+                    {
+                        Console.WriteLine($"Skipping system procedure: {procedure.Name}");
+                        continue;
+                    }
+
+                    string createProcedureScript = GetCreateProcedureScript(procedure, scriptingOptionsForFunctions);
+
+                    using (StreamWriter writer = new StreamWriter(combinedProceduresFilePath, true))
+                    {
+
+                        writer.WriteLine(createProcedureScript);
+                        writer.WriteLine();
+                        writer.WriteLine("GO");
+                        writer.WriteLine();
+
+                        processedProcedures++;
+
+                        int progressPercentage = (int)((double)processedProcedures / totalStoredProcedures * 100);
+                        Console.WriteLine($"Procedure progress: {progressPercentage}%");
+                        logWriter.WriteLine($"Procedure '{procedure.Name}' exported. Progress: {progressPercentage}%. [{DateTime.Now}]");
+                    }
+                }
+
+                Console.WriteLine("Stored Procedures export completed successfully.");
+                logWriter.WriteLine($"Stored Procedures export completed");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"An exception occured! {ex}");
+                logWriter.WriteLine($"An exception occured! {ex}");
+            }
         }
 
         static void ExportViews(Database database, SqlConnection connection, string combinedViewsFilePath, ScriptingOptions scriptingOptions, StreamWriter logWriter)
         {
-            Console.WriteLine("Views export");
-            logWriter.WriteLine($"Views export started");
-
-            int totalViews = database.Views.Count;
-            int processedViews = 0;
             try
             {
-                // Loop through the views in the database and generate scripts
+                Console.WriteLine("Views export");
+                logWriter.WriteLine($"Views export started");
+
+                int totalViews = database.Views.Count;
+                int processedViews = 0;
+
                 foreach (View view in database.Views)
                 {
-                    // Check if the view is a system object
+
                     if (!view.IsSystemObject)
                     {
                         string createViewScript = GetCreateViewScript(view, scriptingOptions);
 
-                        // Append the create view script to the combined script file
                         using (StreamWriter writer = new StreamWriter(combinedViewsFilePath, true))
                         {
-                            // Write the create view script to the file
-                            writer.WriteLine(createViewScript);
-                            writer.WriteLine(); // Add a blank line between views for better readability
 
-                            // Log the progress
+                            writer.WriteLine(createViewScript);
+                            writer.WriteLine();
+                            writer.WriteLine("GO");
+                            writer.WriteLine();
+
                             processedViews++;
                             int progressPercentage = (int)((double)processedViews / totalViews * 100);
                             Console.WriteLine($"View progress: {progressPercentage}%");
                             logWriter.WriteLine($"View '{view.Name}' exported. Progress: {progressPercentage}%. [{DateTime.Now}]");
                         }
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Skipped system function {view}");
+                        logWriter.WriteLine($"Skipped system function {view}");
                     }
                 }
 
@@ -202,113 +374,280 @@ namespace DatabaseExporter
             }
             catch (Exception ex)
             {
-                logWriter.WriteLine($"An exception occured. Exception message:" + ex);
+                Console.WriteLine($"An exception occured! {ex}");
+                logWriter.WriteLine($"An exception occured! {ex}");
             }
         }
 
         static void ExportCustomDataTypes(Database database, SqlConnection connection, string combinedDataTypesFilePath, ScriptingOptions scriptingOptions, StreamWriter logWriter)
         {
-            Console.WriteLine("Custom data types export");
-            logWriter.WriteLine($"Custom data types export started");
-
-            int totalDataTypes = database.UserDefinedDataTypes.Count;
-            int processedDataTypes = 0;
-
-            // Loop through the UserDefinedDataTypes in the database and generate scripts
-            foreach (UserDefinedDataType dataType in database.UserDefinedDataTypes)
+            try
             {
-                string createDataTypeScript = GetCreateDataTypeScript(dataType, scriptingOptions);
+                Console.WriteLine("Custom data types export");
+                logWriter.WriteLine($"Custom data types export started");
 
-                // Append the create data type script to the combined script file
-                using (StreamWriter writer = new StreamWriter(combinedDataTypesFilePath, true))
+                int totalDataTypes = database.UserDefinedDataTypes.Count;
+                int processedDataTypes = 0;
+
+                foreach (UserDefinedDataType dataType in database.UserDefinedDataTypes)
                 {
-                    // Write the create data type script to the file
-                    writer.WriteLine(createDataTypeScript);
-                    writer.WriteLine(); // Add a blank line for better readability
-                                        // Log the progress
-                    processedDataTypes++;
-                    int progressPercentage = (int)((double)processedDataTypes / totalDataTypes * 100);
-                    Console.WriteLine($"Costom data types progress: {progressPercentage}%");
-                    logWriter.WriteLine($"Custom data type '{dataType.Name}' exported. [{DateTime.Now}]");
-                }
-            }
+                    string createDataTypeScript = GetCreateDataTypeScript(dataType, scriptingOptions);
 
-            Console.WriteLine("Custom data types export completed successfully.");
-            logWriter.WriteLine($"Custom data types export completed");
+                    using (StreamWriter writer = new StreamWriter(combinedDataTypesFilePath, true))
+                    {
+
+                        writer.WriteLine(createDataTypeScript);
+                        writer.WriteLine();
+                        writer.WriteLine("GO");
+                        writer.WriteLine();
+
+                        processedDataTypes++;
+                        int progressPercentage = (int)((double)processedDataTypes / totalDataTypes * 100);
+                        Console.WriteLine($"Costom data types progress: {progressPercentage}%");
+                        logWriter.WriteLine($"Custom data type '{dataType.Name}' exported. [{DateTime.Now}]");
+                    }
+                }
+
+                Console.WriteLine("Custom data types export completed successfully.");
+                logWriter.WriteLine($"Custom data types export completed");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"An exception occured! {ex}");
+                logWriter.WriteLine($"An exception occured! {ex}");
+            }
         }
 
-        static void ExportTableData(Database database, SqlConnection connection, ScriptingOptions scriptingOptionsForPopulation, StreamWriter logWriter, string dataPopulationScriptsDirectory)
+        static void ExportTableData(Database database, SqlConnection connection, ScriptingOptions scriptingOptionsForPopulation, StreamWriter logWriter, string dataPopulationScriptsDirectory, Server server)
         {
-            Console.WriteLine("Table data export using SMO");
-            logWriter.WriteLine($"Table data export started");
-
-            int totalDataTypes = database.Tables.Count;
-            int processedDataTypes = 0;
-
-            foreach (Table table in database.Tables)
+            try
             {
-                string insertScript = GetInsertScript(table, scriptingOptionsForPopulation);
+                Console.WriteLine("Table data export using SMO");
+                logWriter.WriteLine($"Table data export started");
 
-                // Create a script file for each table
-                string dataPopulationScriptsFilePath = Path.Combine(dataPopulationScriptsDirectory, $"{table.Name}_DataScript.sql");
+                int totalTablesData = database.Tables.Count;
+                int processedDataTypes = 0;
 
-                // Append the insert script to the individual script file
-                using (StreamWriter writer = new StreamWriter(dataPopulationScriptsFilePath))
+                foreach (Table table in database.Tables)
                 {
-                    // Write the insert script to the file
-                    writer.WriteLine(insertScript);
-                    // Log the progress
-                    processedDataTypes++;
-                    int progressPercentage = (int)((double)processedDataTypes / totalDataTypes * 100);
-                    Console.WriteLine($"Population scripting progress: {progressPercentage}%");
-                    logWriter.WriteLine($"Table data for '{table.Name}' exported. [{DateTime.Now}]");
+                    string insertScript = GetInsertScript(table, scriptingOptionsForPopulation, server);
+
+                    string dataPopulationScriptsFilePath = Path.Combine(dataPopulationScriptsDirectory, $"dbo.{table.Name}_DataScript.sql");
+
+                    using (StreamWriter writer = new StreamWriter(dataPopulationScriptsFilePath))
+                    {
+
+                        writer.WriteLine(insertScript);
+                        writer.WriteLine();
+                        writer.WriteLine("GO");
+                        writer.WriteLine();
+
+                        processedDataTypes++;
+                        int progressPercentage = (int)((double)processedDataTypes / totalTablesData * 100);
+                        Console.WriteLine($"Population scripting progress: {progressPercentage}%");
+                        logWriter.WriteLine($"Table data for '{table.Name}' exported. [{DateTime.Now}]");
+                    }
                 }
+
+                Console.WriteLine("Table data export completed successfully.");
+                logWriter.WriteLine($"Table data export completed");
             }
-
-            Console.WriteLine("Table data export completed successfully.");
-            logWriter.WriteLine($"Table data export completed");
-        }
-
-        static string GetCreateProcedureScript(StoredProcedure procedure, ScriptingOptions scriptingOptions)
-        {
-            StringBuilder scriptBuilder = new StringBuilder();
-
-            // Generate the script for the procedure based on the specified options
-            StringCollection script = procedure.Script(scriptingOptions);
-
-            // Concatenate the lines from StringCollection to form the complete script
-            foreach (string line in script)
+            catch (Exception ex)
             {
-                scriptBuilder.AppendLine(line);
+                Console.WriteLine($"An exception occured! {ex}");
+                logWriter.WriteLine($"An exception occured! {ex}");
             }
-
-            return scriptBuilder.ToString();
         }
+
+        static void ExportUsers(Database database, SqlConnection connection, string combinedUsersFilePath, ScriptingOptions scriptingOptions, StreamWriter logWriter)
+        {
+            try
+            {
+                Console.WriteLine("Users export");
+                logWriter.WriteLine($"Users export started");
+
+                int totalUsers = database.Users.Count;
+                int processedUsers = 0;
+
+                foreach (User user in database.Users)
+                {
+
+                    if (!user.IsSystemObject)
+                    {
+                        string createUserScript = GetCreateUserScript(user, scriptingOptions);
+
+                        using (StreamWriter writer = new StreamWriter(combinedUsersFilePath, true))
+                        {
+
+                            writer.WriteLine(createUserScript);
+                            writer.WriteLine();
+                            writer.WriteLine("GO");
+                            writer.WriteLine();
+
+                            processedUsers++;
+                            int progressPercentage = (int)((double)processedUsers / totalUsers * 100);
+                            Console.WriteLine($"User progress: {progressPercentage}%");
+                            logWriter.WriteLine($"User '{user.Name}' exported. Progress: {progressPercentage}%. [{DateTime.Now}]");
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Skipped system function {user}");
+                        logWriter.WriteLine($"Skipped system function {user}");
+                    }
+                }
+                Console.WriteLine("Users export completed successfully.");
+                logWriter.WriteLine($"Users export completed");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"An exception occured! {ex}");
+                logWriter.WriteLine($"An exception occured! {ex}");
+            }
+        }
+
+        static void ExportRoles(Database database, SqlConnection connection, string combinedRolesFilePath, ScriptingOptions scriptingOptions, StreamWriter logWriter)
+        {
+            try
+            {
+                Console.WriteLine("Roles export");
+                logWriter.WriteLine($"Roles export started");
+
+                int totalRoles = database.Roles.Count;
+                int processedRoles = 0;
+
+                foreach (DatabaseRole role in database.Roles)
+                {
+                    string createRoleScript = GetCreateRoleScript(role, scriptingOptions);
+
+                    using (StreamWriter writer = new StreamWriter(combinedRolesFilePath, true))
+                    {
+
+                        writer.WriteLine(createRoleScript);
+                        writer.WriteLine();
+                        writer.WriteLine("GO");
+                        writer.WriteLine();
+
+                        processedRoles++;
+                        int progressPercentage = (int)((double)processedRoles / totalRoles * 100);
+                        Console.WriteLine($"Roles progress: {progressPercentage}%");
+                        logWriter.WriteLine($"Role '{role.Name}' exported. Progress: {progressPercentage}%. [{DateTime.Now}]");
+                    }
+                }
+
+                Console.WriteLine("Roles export completed successfully.");
+                logWriter.WriteLine($"Roles export completed");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"An exception occured! {ex}");
+                logWriter.WriteLine($"An exception occured! {ex}");
+            }
+        }
+
+        static void ExportUserDefFunctions(Database database, SqlConnection connection, string combinedUserDefinedFunctionsFilePath, ScriptingOptions scriptingOptions, StreamWriter logWriter)
+        {
+            try
+            {
+                Console.WriteLine("Functions export");
+                logWriter.WriteLine($"Functions export started");
+
+                int totalFunctions = database.UserDefinedFunctions.Count;
+                int processedFunctions = 0;
+
+                foreach (UserDefinedFunction function in database.UserDefinedFunctions)
+                {
+                    if (!function.IsSystemObject)
+                    {
+                        string createFunctionScript = GetCreateFunctionScript(function, scriptingOptions);
+
+                        using (StreamWriter writer = new StreamWriter(combinedUserDefinedFunctionsFilePath, true))
+                        {
+
+                            writer.WriteLine(createFunctionScript);
+                            writer.WriteLine();
+                            writer.WriteLine("GO");
+                            writer.WriteLine();
+
+                            processedFunctions++;
+                            int progressPercentage = (int)((double)processedFunctions / totalFunctions * 100);
+                            Console.WriteLine($"Functions progress: {progressPercentage}%");
+                            logWriter.WriteLine($"Function '{function.Name}' exported. Progress: {progressPercentage}%. [{DateTime.Now}]");
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Skipped system function {function}");
+                        logWriter.WriteLine($"Skipped system function {function}");
+                    }
+                }
+
+                Console.WriteLine("Functions export completed successfully.");
+                logWriter.WriteLine($"Functions export completed");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"An exception occured! {ex}");
+                logWriter.WriteLine($"An exception occured! {ex}");
+            }
+        }
+
+        #endregion
+        #region GetCreateRegion
 
         static string GetCreateTableScript(Table table, ScriptingOptions scriptingOptions)
         {
             StringBuilder scriptBuilder = new StringBuilder();
-
-            // Generate the script for the table based on the specified options
             StringCollection script = table.Script(scriptingOptions);
 
-            // Concatenate the lines from StringCollection to form the complete script
-            foreach (string line in script)
+            for (int i = 0; i < script.Count; i++)
             {
-                scriptBuilder.AppendLine(line);
+                // Check if the line contains "CREATE TRIGGER"
+                if (script[i].IndexOf("CREATE TRIGGER", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    // Add a "GO" statement on a new line before the line containing "CREATE TRIGGER"
+                    scriptBuilder.AppendLine("GO");
+                }
+
+                scriptBuilder.AppendLine(script[i]);
             }
 
             return scriptBuilder.ToString();
         }
+
+
+
+        static string GetCreateProcedureScript(StoredProcedure procedure, ScriptingOptions scriptingOptionsForFunctions)
+        {
+            StringBuilder scriptBuilder = new StringBuilder();
+
+            StringCollection script = procedure.Script(scriptingOptionsForFunctions);
+
+            for (int i = 0; i < script.Count; i++)
+            {
+                // Check if the line is SET QUOTED_IDENTIFIER ON or SET QUOTED_IDENTIFIER OFF
+                if (script[i].Trim().StartsWith("SET QUOTED_IDENTIFIER", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Add a "GO" statement on a new line after the SET QUOTED_IDENTIFIER statement
+                    scriptBuilder.AppendLine(script[i]);
+                    scriptBuilder.AppendLine("GO");
+                }
+                else
+                {
+                    scriptBuilder.AppendLine(script[i]);
+                }
+            }
+
+            return scriptBuilder.ToString();
+        }
+
 
         static string GetCreateViewScript(View view, ScriptingOptions scriptingOptions)
         {
             StringBuilder scriptBuilder = new StringBuilder();
 
-            // Generate the script for the view based on the specified options
             StringCollection script = view.Script(scriptingOptions);
 
-            // Concatenate the lines from StringCollection to form the complete script
             foreach (string line in script)
             {
                 scriptBuilder.AppendLine(line);
@@ -321,10 +660,8 @@ namespace DatabaseExporter
         {
             StringBuilder scriptBuilder = new StringBuilder();
 
-            // Generate the script for the user-defined data type based on the specified options
             StringCollection script = dataType.Script(scriptingOptions);
 
-            // Concatenate the lines from StringCollection to form the complete script
             foreach (string line in script)
             {
                 scriptBuilder.AppendLine(line);
@@ -333,15 +670,24 @@ namespace DatabaseExporter
             return scriptBuilder.ToString();
         }
 
-        static string GetInsertScript(Table table, ScriptingOptions scriptingOptionsForPopulation)
+        static string GetInsertScript(Table table, ScriptingOptions scriptingOptionsForPopulation, Server server)
         {
             StringBuilder scriptBuilder = new StringBuilder();
 
-            // Retrieve data from the table and generate INSERT statements using SMO
+            var scripter = new Scripter(server) { Options = { ScriptData = true, ScriptSchema = false } };
+            var script = scripter.EnumScript(new SqlSmoObject[] { table });
+            foreach (var line in script)
+            {
+                scriptBuilder.AppendLine(line);
+            }
+            return scriptBuilder.ToString();
+        }
 
-            // Generate the script for the user-defined data type based on the specified options
-            scriptingOptionsForPopulation.ScriptData = true;
-            StringCollection script = table.Script(scriptingOptionsForPopulation);
+        static string GetCreateUserScript(User user, ScriptingOptions scriptingOptions)
+        {
+            StringBuilder scriptBuilder = new StringBuilder();
+
+            StringCollection script = user.Script(scriptingOptions);
 
             foreach (string line in script)
             {
@@ -350,5 +696,58 @@ namespace DatabaseExporter
 
             return scriptBuilder.ToString();
         }
+
+        static string GetCreateRoleScript(DatabaseRole role, ScriptingOptions scriptingOptions)
+        {
+            StringBuilder scriptBuilder = new StringBuilder();
+
+            StringCollection script = role.Script(scriptingOptions);
+
+            foreach (string line in script)
+            {
+                scriptBuilder.AppendLine(line);
+            }
+
+            return scriptBuilder.ToString();
+        }
+
+        static string GetCreateFunctionScript(UserDefinedFunction function, ScriptingOptions scriptingOptions)
+        {
+            StringBuilder scriptBuilder = new StringBuilder();
+
+            StringCollection script = function.Script(scriptingOptions);
+
+            foreach (string line in script)
+            {
+                scriptBuilder.AppendLine(line);
+            }
+
+            return scriptBuilder.ToString();
+        }
+
+        static string GetCreateTriggerScript(Trigger trigger, ScriptingOptions scriptingOptions)
+        {
+            StringBuilder scriptBuilder = new StringBuilder();
+
+            StringCollection script = trigger.Script(scriptingOptions);
+            for (int i = 0; i < script.Count; i++)
+            {
+                // Check if the line is SET QUOTED_IDENTIFIER ON or SET QUOTED_IDENTIFIER OFF
+                if (script[i].Trim().StartsWith("SET QUOTED_IDENTIFIER", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Add a "GO" statement on a new line after the SET QUOTED_IDENTIFIER statement
+                    scriptBuilder.AppendLine(script[i]);
+                    scriptBuilder.AppendLine("GO");
+                }
+                else
+                {
+                    scriptBuilder.AppendLine(script[i]);
+                }
+            }
+
+            return scriptBuilder.ToString();
+        }
+
+        #endregion
     }
 }
